@@ -10,6 +10,13 @@ const mime = new MimeLookup(require('mime-db'))
 const txidReg = new RegExp('^[0-9a-fA-F]{64}$')
 const version = require('./package.json').version
 
+var serverpool = [
+    'electrumx.bitcoinsv.io:50002',
+    'sv.satoshi.io:50002',
+    'sv2.satoshi.io:50002',
+    'sv.electrumx.cash:50002'
+]
+
 program
     .command('test')
     .description('Test if MiniGate is working on ElectrumX')
@@ -22,58 +29,85 @@ program
 
 program
     .version(version)
-    .option('-e, --electrumX [electrumXServer]', 'Specify a ElectrumX Server', 'electrumx.bitcoinsv.io:50002')
+    .option('-e, --electrumX [electrumXServer]', 'Specify a ElectrumX Server')
     .option('-p, --port [port]', 'Specify port minigate should listen on', 8000)
 
 program
     .parse(process.argv);
 
-var esAddr = program.electrumX.split(':')[0]
-var esPort = parseInt(program.electrumX.split(':')[1])
 var eclreuse = null
+var curHost = ""
+var curPort = ""
 
-function getCli(port, host, protocol){
-    if(eclreuse!=null)return eclreuse
-    else {
-        eclreuse = new ElectrumCli(port, host, protocol)
-        eclreuse.onClose = ()=>{
+function getCliFromPool(){
+    if(eclreuse!=null)return (async()=>{return eclreuse})()
+    // get the fastest server
+    else return Promise.race(serverpool.map(server=>{
+        var esHost = server.split(':')[0]
+        var esPort = parseInt(server.split(':')[1])
+        var ecl = new ElectrumCli(esPort, esHost, 'tls')
+        return ecl.connect().then(()=>{
+            return ecl
+        })
+    })).then((ecl)=>{
+        curHost = ecl.host
+        curPort = ecl.port
+        ecl.onClose = ()=>{
             console.log("Presisted Connection to ElectrumX Server Closed.")
             eclreuse = null
         }
-        return eclreuse
-    }
+        ecl.serverDonation_address().then(address=>{
+            console.log("Presisted Connection to ElectrumX Server Established.")
+            console.log(`  ElectrumX Server Connected: ${curHost + ":" + curPort}`)
+            console.log(`  ElectrumX Server Donations: ${ address }`)
+            console.log(`You can helping electrumX server staying alive by making a donation to it.\n`)
+        })
+        eclreuse = ecl
+        return ecl
+    })
 }
 
 function test(){
-    var esAddr = program.electrumX.split(':')[0]
-    var esPort = parseInt(program.electrumX.split(':')[1])
-    console.log("Testing if minigate can connect " + program.electrumX)
-    var ecl = new ElectrumCli(esPort, esAddr, 'tls')
-    ecl.connect().then(()=>{
-            return ecl.server_version("0", "1.2")
-    }).then(r=>{
-        console.log("Nice! MiniGate is working on " + program.electrumX)
+    if(program.electrumX){
+        serverpool = [ program.electrumX ]
+    }
+    console.log("Testing if minigate can connect to electrumX server...")
+    var ecl = null
+    getCliFromPool().then(result=>{
+        ecl = result
+        return ecl.connect()
+    }).then(()=>{
+        console.log(`  ElectrumX Server Connected: ${curHost + ":" + curPort}`)
+        console.log("Nice! MiniGate is working.")
         ecl.close()
     }).catch(e=>{
         console.log(e)
-        console.log("Cannot connect to " + esAddr + ":" + esPort)
-        console.log("Please try another ElectrumX Server")
+        console.log("Cannot connect to electrumX server.")
+        console.log("You should specify a electrumX server.")
         console.log("  minigate [start|test] -e [ElectrumX Server Address:Port]")
-        ecl.close()
+        if(ecl)ecl.close()
+    }).then(()=>{
+        process.exit()
     })
 }
+
 function start(){
-    var esAddr = program.electrumX.split(':')[0]
-    var esPort = parseInt(program.electrumX.split(':')[1])
+    if(program.electrumX){
+        serverpool = [ program.electrumX ]
+    }
     app.get('/', (req, res) => res.send('MiniGate Online'))
     app.get('/:txid', (req, res) => {
         var txid = req.params.txid.split('.')[0]
         if(!txidReg.test(txid))return res.send("MiniGate Error: Not A Valid TXID")
-        var ecl = getCli(esPort, esAddr, 'tls')
-        ecl.connect().then(()=>{
+
+        var ecl = null
+        getCliFromPool().then(result=>{
+            ecl = result
+            return ecl.connect()
+        }).then(()=>{
             return ecl.server_version("0", "1.2")
         }).then(r=>{
-            console.log("Getting " + txid + " from " + esAddr + ":" + esPort)
+            console.log("Getting " + txid)
             return ecl.blockchainTransaction_get(txid, false)
         }).then(tx=>{
             if(tx.code){
@@ -89,12 +123,13 @@ function start(){
                 res.send(content)
             }
         }).catch(e=>{
-            console.log(`Failed to Get ${ txid } from ${ esAddr + ":" + esPort }...`)
-            ecl.close()
+            console.log(`Failed to Get ${ txid } ...`)
+            if(ecl)ecl.close()
             res.send(JSON.stringify(e))
         })
     })
-    app.listen(program.port, () => console.log(`MiniGate Listening on ${ program.port } ...\n  Version: ${ version }\n  Electrum Server: ${ program.electrumX }`))
+    app.listen(program.port, () => console.log(`MiniGate Listening on ${ program.port } ...\n  Version: ${ version }`))
+    getCliFromPool()
 }
 
 if(program.args.length==0)start()
