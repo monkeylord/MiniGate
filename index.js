@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 
+const os = require('os')
+const fs = require('fs')
 const program = require('commander')
 const express = require('express')
 const app = express()
@@ -28,9 +30,15 @@ program
     .action(test)
 
 program
+    .command('clean')
+    .description('Clean cache.')
+    .action(cleanCache)
+
+program
     .version(version)
     .option('-e, --electrumX [electrumXServer]', 'Specify a ElectrumX Server')
     .option('-p, --port [port]', 'Specify port minigate should listen on', 8000)
+    .option('-c, --cache [true/false]', 'Enable local TX cache', true)
 
 program
     .parse(process.argv);
@@ -100,16 +108,33 @@ function start(){
         var txid = req.params.txid.split('.')[0]
         if(!txidReg.test(txid))return res.send("MiniGate Error: Not A Valid TXID")
 
+        var fetchedTX = null
         var ecl = null
-        getCliFromPool().then(result=>{
-            ecl = result
-            return ecl.connect()
-        }).then(()=>{
-            return ecl.server_version("0", "1.2")
-        }).then(r=>{
-            console.log("Getting " + txid)
-            return ecl.blockchainTransaction_get(txid, false)
-        }).then(tx=>{
+        
+        // check if tx cached
+        if(program.cache){
+            var cachedTX = getCache(txid)
+            if(cachedTX){
+                console.log("Cache matched " + txid)
+                fetchedTX = (async()=>{return cachedTX})()
+            }
+        }
+        
+        // fetch TX from electrumX server
+        if(fetchedTX == null){
+            fetchedTX = getCliFromPool().then(result=>{
+                ecl = result
+                return ecl.connect()
+            }).then(()=>{
+                return ecl.server_version("0", "1.2")
+            }).then(r=>{
+                console.log("Getting " + txid)
+                return ecl.blockchainTransaction_get(txid, false)
+            })
+        }
+        
+        // handle tx
+        fetchedTX.then(tx=>{
             if(tx.code){
                 // If code is not undefined, something must be wrong.
                 res.send(JSON.stringify(tx))
@@ -121,6 +146,7 @@ function start(){
                 if(req.params.txid.split('.').length > 1)res.set('Content-Type',mime.lookup(req.params.txid));
                 else res.set('Content-Type',contentType.toString());
                 res.send(content)
+                setCache(tx.id,tx.toString())
             }
         }).catch(e=>{
             console.log(`Failed to Get ${ txid } ...`)
@@ -130,6 +156,35 @@ function start(){
     })
     app.listen(program.port, () => console.log(`MiniGate Listening on ${ program.port } ...\n  Version: ${ version }`))
     getCliFromPool()
+}
+
+function cleanCache(){
+    var cacheDir = os.tmpdir()+"\\minigate"
+    var count = 0
+    if(fs.existsSync(cacheDir)){
+        var txFiles = fs.readdirSync(cacheDir)
+        count = txFiles.length
+        txFiles.forEach(function(file) {
+            var cachedTXFile = cacheDir + "/" + file
+            fs.unlinkSync(cachedTXFile)
+        })
+        fs.rmdirSync(cacheDir);
+    }
+    console.log(`MiniGate: ${ count } cached TX(s) cleaned`)
+}
+
+function getCache(txid){
+    var cacheDir = os.tmpdir()+"\\minigate"
+    if(fs.existsSync(cacheDir)){
+        if(fs.existsSync(cacheDir+'\\'+txid))return fs.readFileSync(cacheDir+'\\'+txid).toString()
+        else return null
+    }else return null
+}
+
+function setCache(txid, tx){
+    var cacheDir = os.tmpdir()+"\\minigate"
+    if(!fs.existsSync(cacheDir))fs.mkdirSync(cacheDir)
+    fs.writeFileSync(cacheDir+"\\"+txid, tx)
 }
 
 if(program.args.length==0)start()
