@@ -1,6 +1,6 @@
 {
   "name": "minigate",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "A light weight metanet gateway.",
   "main": "index.js",
   "scripts": {
@@ -33,5 +33,6 @@
     "electrum-client": "0.0.6",
     "express": "^4.16.4",
     "mime-lookup": "0.0.2"
-  }
+  },
+  "devDependencies": {}
 }

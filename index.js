@@ -30,13 +30,28 @@ program
 
 var esAddr = program.electrumX.split(':')[0]
 var esPort = parseInt(program.electrumX.split(':')[1])
+var eclreuse = null
+
+function getCli(port, host, protocol){
+    if(eclreuse!=null)return eclreuse
+    else {
+        eclreuse = new ElectrumCli(port, host, protocol)
+        eclreuse.onClose = ()=>{
+            console.log("Presisted Connection to ElectrumX Server Closed.")
+            eclreuse = null
+        }
+        return eclreuse
+    }
+}
 
 function test(){
     var esAddr = program.electrumX.split(':')[0]
     var esPort = parseInt(program.electrumX.split(':')[1])
     console.log("Testing if minigate can connect " + program.electrumX)
     var ecl = new ElectrumCli(esPort, esAddr, 'tls')
-    ecl.connect().then(r=>{
+    ecl.connect().then(()=>{
+            return ecl.server_version("0", "1.2")
+    }).then(r=>{
         console.log("Nice! MiniGate is working on " + program.electrumX)
         ecl.close()
     }).catch(e=>{
@@ -54,12 +69,13 @@ function start(){
     app.get('/:txid', (req, res) => {
         var txid = req.params.txid.split('.')[0]
         if(!txidReg.test(txid))return res.send("MiniGate Error: Not A Valid TXID")
-        var ecl = new ElectrumCli(esPort, esAddr, 'tls')
-        ecl.connect().then(r=>{
+        var ecl = getCli(esPort, esAddr, 'tls')
+        ecl.connect().then(()=>{
+            return ecl.server_version("0", "1.2")
+        }).then(r=>{
             console.log("Getting " + txid + " from " + esAddr + ":" + esPort)
             return ecl.blockchainTransaction_get(txid, false)
         }).then(tx=>{
-            ecl.close()
             if(tx.code){
                 // If code is not undefined, something must be wrong.
                 res.send(JSON.stringify(tx))
@@ -73,6 +89,7 @@ function start(){
                 res.send(content)
             }
         }).catch(e=>{
+            console.log(`Failed to Get ${ txid } from ${ esAddr + ":" + esPort }...`)
             ecl.close()
             res.send(JSON.stringify(e))
         })
