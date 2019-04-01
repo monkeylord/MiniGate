@@ -126,7 +126,7 @@ function start(){
                 ecl = result
                 return ecl.connect()
             }).then(()=>{
-                return ecl.server_version("0", "1.2")
+                return ecl.server_version(`MiniGate v${version}`, "1.2")
             }).then(r=>{
                 console.log("Getting " + txid)
                 return ecl.blockchainTransaction_get(txid, false)
