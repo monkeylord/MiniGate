@@ -26,7 +26,7 @@ You will see
 >  Version: 0.0.1
 >  Electrum Server: electrumx.bitcoinsv.io:50002
 
-Now you can browse metanet B protocol resources at http://127.0.0.1:8000
+Now you can browse metanet B protocol resources at http://127.0.0.1:8000/[txid]
 
 ### Advanced
 
