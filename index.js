@@ -60,18 +60,21 @@ function getCliFromPool(){
     })).then((ecl)=>{
         curHost = ecl.host
         curPort = ecl.port
+        eclreuse = ecl
         ecl.onClose = ()=>{
             console.log("Presisted Connection to ElectrumX Server Closed.")
             eclreuse = null
         }
-        ecl.serverDonation_address().then(address=>{
-            console.log("Presisted Connection to ElectrumX Server Established.")
-            console.log(`  ElectrumX Server Connected: ${curHost + ":" + curPort}`)
-            console.log(`  ElectrumX Server Donations: ${ address }`)
-            console.log(`You can helping electrumX server staying alive by making a donation to it.\n`)
+        return ecl.server_version(`MiniGate v${version}`, "1.4").then(()=>{
+            return ecl.serverDonation_address().then(address=>{
+                console.log("Presisted Connection to ElectrumX Server Established.")
+                console.log(`  ElectrumX Server Connected: ${curHost + ":" + curPort}`)
+                console.log(`  ElectrumX Server Donations: ${ address }`)
+                console.log(`You can help electrumX server staying alive by making a donation to it.\n`)
+            })
+        }).then(()=>{
+            return ecl
         })
-        eclreuse = ecl
-        return ecl
     })
 }
 
@@ -106,7 +109,10 @@ function start(){
     app.get('/', (req, res) => res.send('MiniGate Online'))
     app.get('/:txid', (req, res) => {
         var txid = req.params.txid.split('.')[0]
-        if(!txidReg.test(txid))return res.send("MiniGate Error: Not A Valid TXID")
+        if(!txidReg.test(txid)) {
+            res.status(404)
+            return res.send("MiniGate Error: Not A Valid TXID")
+        }
 
         var fetchedTX = null
         var ecl = null
@@ -125,8 +131,6 @@ function start(){
             fetchedTX = getCliFromPool().then(result=>{
                 ecl = result
                 return ecl.connect()
-            }).then(()=>{
-                return ecl.server_version(`MiniGate v${version}`, "1.2")
             }).then(r=>{
                 console.log("Getting " + txid)
                 return ecl.blockchainTransaction_get(txid, false)
@@ -137,6 +141,7 @@ function start(){
         fetchedTX.then(tx=>{
             if(tx.code){
                 // If code is not undefined, something must be wrong.
+                res.status(500)
                 res.send(JSON.stringify(tx))
             }else{
                 tx = bsv.Transaction(tx)
@@ -151,7 +156,8 @@ function start(){
         }).catch(e=>{
             console.log(`Failed to Get ${ txid } ...`)
             if(ecl)ecl.close()
-            res.send(JSON.stringify(e))
+            res.status(500)
+            res.send(e)
         })
     })
     app.listen(program.port, () => console.log(`MiniGate Listening on ${ program.port } ...\n  Version: ${ version }`))
