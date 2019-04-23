@@ -16,7 +16,7 @@ var serverpool = [
     'electrumx.bitcoinsv.io:50002',
     'sv.satoshi.io:50002',
     'sv2.satoshi.io:50002',
-    'sv.electrumx.cash:50002'
+    //'sv.electrumx.cash:50002'
 ]
 
 program
@@ -114,9 +114,10 @@ function start(){
             return res.send("MiniGate Error: Not A Valid TXID")
         }
 
-        var fetchedTX = null
+        var fetchedTX = fetchTX(txid)
         var ecl = null
         
+        /*
         // check if tx cached
         if(program.cache){
             var cachedTX = getCache(txid)
@@ -136,6 +137,7 @@ function start(){
                 return ecl.blockchainTransaction_get(txid, false)
             })
         }
+        */
         
         // handle tx
         fetchedTX.then(tx=>{
@@ -160,8 +162,135 @@ function start(){
             res.send(e)
         })
     })
+    app.get('/:addr/[a-zA-Z0-9_~\/@!$&*+,\.:;=-]+', (req, res, next) => {
+        if(!isAddress(req.params.addr))next()
+        else{
+            var key = req.url.replace(`/${req.params.addr}/`,'')
+            var txs = getCliFromPool().then(ecl=>{
+                return ecl.connect().then(()=>{
+                    return ecl
+                })
+            }).then(ecl=>{
+                return ecl.blockchainScripthash_getHistory(getScriptHash(req.params.addr))
+            }).catch(e=>{
+                console.log(`Fail to get ${req.params.addr}'s latest record.`)
+                return []
+            }).then(txs=>{
+                //console.log(txs)
+                var dTree = loadDTree(req.params.addr)
+                return Promise.all(txs.map(txrecord=>{
+                    return fetchTX(txrecord.tx_hash).then(tx=>{
+                        var record = resolveD(tx)
+                        if(record)updateDTree(dTree,record)
+                        //console.log(tx.id)
+                        setCache(tx.id,tx.toString())
+                    })
+                    /*
+                    .catch(e=>{
+                        return
+                    })
+                    */
+                })).then(()=>{
+                    saveDTree(req.params.addr, dTree)
+                    if(dTree[key] && dTree[key].type == 'b')return fetchTX(dTree[key].value).then(tx=>{
+                        var bRecord = resolveB(tx)
+                        if(bRecord){
+                            if(key.split('.').length > 1)res.set('Content-Type',mime.lookup(key))
+                            else res.set('Content-Type',bRecord.media_type)
+                            res.send(bRecord.data)
+                        }else res.send(`${key} not found`)
+                    })
+                    else res.send(`${key} not found`)
+                })
+            })
+        }
+    })
     app.listen(program.port, () => console.log(`MiniGate Listening on ${ program.port } ...\n  Version: ${ version }`))
     getCliFromPool()
+}
+
+async function fetchTX(txid){
+    var fetchedTX = null
+    var ecl = null
+    
+    // check if tx cached
+    if(program.cache){
+        var cachedTX = getCache(txid)
+        if(cachedTX){
+            console.log("Cache matched " + txid)
+            fetchedTX = (async()=>{return cachedTX})()
+        }
+    }
+    
+    // fetch TX from electrumX server
+    if(fetchedTX == null){
+        fetchedTX = getCliFromPool().then(result=>{
+            ecl = result
+            return ecl.connect()
+        }).then(r=>{
+            console.log("Getting " + txid)
+            return ecl.blockchainTransaction_get(txid, false).then(tx=>{
+                if(!tx.code){
+                    tx = bsv.Transaction(tx)
+                    //console.log(tx.id)
+                    setCache(tx.id,tx.toString())
+                }
+                return tx
+            })
+        })
+    }
+    return fetchedTX
+}
+
+function resolveD(tx){
+    var tx = bsv.Transaction(tx)
+    var DataOut = tx.outputs.filter(output=>output.script.isDataOut())[0]
+    // Not Data transaction
+    if(!DataOut)return null
+    var script = DataOut.script
+    if(!(script.chunks[1].buf.toString() == '19iG3WTYSsbyos3uJ733yK4zEioi1FesNU')){
+        // Not D transaction
+        return null
+    }
+    // Malformed
+    if(script.chunks.length<6)return null
+    //console.log(script.chunks[1].buf.toString())
+    return {
+        key: script.chunks[2].buf.toString('utf-8'),
+        value: script.chunks[3].buf.toString('utf-8'),
+        type: script.chunks[4].buf.toString(),
+        sequence: parseInt(script.chunks[5].buf)||1
+    }
+}
+
+function resolveB(tx){
+    var tx = bsv.Transaction(tx)
+    var Bscript = tx.outputs.filter(output=>output.script.isDataOut())[0].script
+    if(!Bscript.chunks[1].buf.toString() == '19HxigV4QyBv3tHpQVcUEQyq1pzZVdoAut'){
+        // Not D transaction
+        return null
+    }
+    return {
+        data: Bscript.chunks[2].buf,
+        media_type: Bscript.chunks[3].buf.toString(),
+        encoding: (Bscript.chunks[4])?Bscript.chunks[4].buf.toString():"",
+        filename: (Bscript.chunks[5])?Bscript.chunks[5].buf.toString():""
+    }    
+}
+
+function loadDTree(addr){
+    if(!fs.existsSync(`${os.tmpdir()}\\minigate\\${addr}.d.json`))return {}
+    else return JSON.parse(fs.readFileSync(`${os.tmpdir()}\\minigate\\${addr}.d.json`).toString())
+}
+function saveDTree(addr, dTree){
+    fs.writeFileSync(`${os.tmpdir()}\\minigate\\${addr}.d.json`,JSON.stringify(dTree,null,2))
+}
+function updateDTree(dTree, dRecord){
+    // Update if D Record is newer
+    if( !dTree[dRecord.key] || dTree[dRecord.key].sequence < dRecord.sequence ){
+        console.log(dRecord.key + 'Updated.')
+        dTree[dRecord.key] = dRecord
+    }
 }
 
 function cleanCache(){
@@ -191,6 +320,16 @@ function setCache(txid, tx){
     var cacheDir = os.tmpdir()+"\\minigate"
     if(!fs.existsSync(cacheDir))fs.mkdirSync(cacheDir)
     fs.writeFileSync(cacheDir+"\\"+txid, tx)
+}
+
+function getScriptHash(address){
+    var script = bsv.Script.fromAddress(address)
+    var scriptHash = bsv.crypto.Hash.sha256(script.toBuffer()).reverse()
+    return scriptHash.toString('hex')
+}
+
+function isAddress(address){
+   return bsv.Address.isValid(address) 
 }
 
 if(program.args.length==0)start()
