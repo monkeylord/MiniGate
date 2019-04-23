@@ -279,11 +279,11 @@ function resolveB(tx){
 }
 
 function loadDTree(addr){
-    if(!fs.existsSync(`${os.tmpdir()}\\minigate\\${addr}.d.json`))return {}
-    else return JSON.parse(fs.readFileSync(`${os.tmpdir()}\\minigate\\${addr}.d.json`).toString())
+    if(!fs.existsSync(`${os.tmpdir()}\/minigate\/${addr}.d.json`))return {}
+    else return JSON.parse(fs.readFileSync(`${os.tmpdir()}\/minigate\/${addr}.d.json`).toString())
 }
 function saveDTree(addr, dTree){
-    fs.writeFileSync(`${os.tmpdir()}\\minigate\\${addr}.d.json`,JSON.stringify(dTree,null,2))
+    fs.writeFileSync(`${os.tmpdir()}\/minigate\/${addr}.d.json`,JSON.stringify(dTree,null,2))
 }
 function updateDTree(dTree, dRecord){
     // Update if D Record is newer
@@ -294,7 +294,7 @@ function updateDTree(dTree, dRecord){
 }
 
 function cleanCache(){
-    var cacheDir = os.tmpdir()+"\\minigate"
+    var cacheDir = os.tmpdir()+"\/minigate"
     var count = 0
     if(fs.existsSync(cacheDir)){
         var txFiles = fs.readdirSync(cacheDir)
@@ -309,17 +309,17 @@ function cleanCache(){
 }
 
 function getCache(txid){
-    var cacheDir = os.tmpdir()+"\\minigate"
+    var cacheDir = os.tmpdir()+"\/minigate"
     if(fs.existsSync(cacheDir)){
-        if(fs.existsSync(cacheDir+'\\'+txid))return fs.readFileSync(cacheDir+'\\'+txid).toString()
+        if(fs.existsSync(cacheDir+'\/'+txid))return fs.readFileSync(cacheDir+'\/'+txid).toString()
         else return null
     }else return null
 }
 
 function setCache(txid, tx){
-    var cacheDir = os.tmpdir()+"\\minigate"
+    var cacheDir = os.tmpdir()+"\/minigate"
     if(!fs.existsSync(cacheDir))fs.mkdirSync(cacheDir)
-    fs.writeFileSync(cacheDir+"\\"+txid, tx)
+    fs.writeFileSync(cacheDir+"\/"+txid, tx)
 }
 
 function getScriptHash(address){
