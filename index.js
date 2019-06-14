@@ -115,7 +115,7 @@ function start(){
         }
 
         var fetchedTX = fetchTX(txid)
-        var ecl = null
+        //var ecl = null
         
         /*
         // check if tx cached
@@ -146,18 +146,25 @@ function start(){
                 res.status(500)
                 res.send(JSON.stringify(tx))
             }else{
-                tx = bsv.Transaction(tx)
-                var Bscript = tx.outputs.filter(output=>output.script.isDataOut())[0].script
-                var content = Bscript.chunks[2].buf
-                var contentType = Bscript.chunks[3].buf
-                if(req.params.txid.split('.').length > 1)res.set('Content-Type',mime.lookup(req.params.txid));
-                else res.set('Content-Type',contentType.toString());
-                res.send(content)
+                var bcatRecord = resolveBcat(tx)
+                if(bcatRecord!=null){
+                    Promise.all(bcatRecord.data.map(txid=>fetchTX(txid))).then(txs=>{
+                        var bPartRecords = txs.map(tx=>resolveBcatPart(tx))
+                        if(req.params.txid.split('.').length > 1)res.set('Content-Type',mime.lookup(req.params.txid));
+                        else res.set('Content-Type',bcatRecord.media_type);
+                        res.send(Buffer.concat(bPartRecords.map(bPart=>bPart.data)))
+                    })
+                }else{
+                    var bRecord = resolveB(tx)
+                    if(req.params.txid.split('.').length > 1)res.set('Content-Type',mime.lookup(req.params.txid));
+                    else res.set('Content-Type',bRecord.media_type);
+                    res.send(bRecord.data)
+                }
                 setCache(tx.id,tx.toString())
             }
         }).catch(e=>{
             console.log(`Failed to Get ${ txid } ...`)
-            if(ecl)ecl.close()
+            //if(ecl)ecl.close()
             res.status(500)
             res.send(e)
         })
@@ -266,8 +273,8 @@ function resolveD(tx){
 function resolveB(tx){
     var tx = bsv.Transaction(tx)
     var Bscript = tx.outputs.filter(output=>output.script.isDataOut())[0].script
-    if(!Bscript.chunks[1].buf.toString() == '19HxigV4QyBv3tHpQVcUEQyq1pzZVdoAut'){
-        // Not D transaction
+    if(!(Bscript.chunks[1].buf.toString() == '19HxigV4QyBv3tHpQVcUEQyq1pzZVdoAut')){
+        // Not B transaction
         return null
     }
     return {
@@ -275,6 +282,34 @@ function resolveB(tx){
         media_type: Bscript.chunks[3].buf.toString(),
         encoding: (Bscript.chunks[4])?Bscript.chunks[4].buf.toString():"",
         filename: (Bscript.chunks[5])?Bscript.chunks[5].buf.toString():""
+    }    
+}
+
+function resolveBcat(tx){
+    var tx = bsv.Transaction(tx)
+    var Bscript = tx.outputs.filter(output=>output.script.isDataOut())[0].script
+    if(!(Bscript.chunks[1].buf.toString() == '15DHFxWZJT58f9nhyGnsRBqrgwK4W6h4Up')){
+        // Not Bcat transaction
+        return null
+    }
+    return {
+        info: Bscript.chunks[2].buf,
+        media_type: Bscript.chunks[3].buf.toString(),
+        encoding: (Bscript.chunks[4])?Bscript.chunks[4].buf.toString():"",
+        filename: (Bscript.chunks[5])?Bscript.chunks[5].buf.toString():"",
+        flag: (Bscript.chunks[6])?Bscript.chunks[6].buf.toString():"",
+        data:Bscript.chunks.slice(7).map(chunk=>chunk.buf.toString('hex'))
+    }    
+}
+function resolveBcatPart(tx){
+    var tx = bsv.Transaction(tx)
+    var Bscript = tx.outputs.filter(output=>output.script.isDataOut())[0].script
+    if(!(Bscript.chunks[1].buf.toString() == '1ChDHzdd1H4wSjgGMHyndZm6qxEDGjqpJL')){
+        // Not BcatPart transaction, try B
+        return resolveB(tx)
+    }
+    return {
+        data: Bscript.chunks[2].buf
     }    
 }
 
