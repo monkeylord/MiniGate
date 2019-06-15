@@ -11,6 +11,8 @@ const MimeLookup = require('mime-lookup')
 const mime = new MimeLookup(require('mime-db'))
 const txidReg = new RegExp('^[0-9a-fA-F]{64}$')
 const version = require('./package.json').version
+const Protocol = require('./protocol')
+const Cache = require('./cache')
 
 var serverpool = [
     'electrumx.bitcoinsv.io:50002',
@@ -32,7 +34,7 @@ program
 program
     .command('clean')
     .description('Clean cache.')
-    .action(cleanCache)
+    .action(Cache.cleanCache)
 
 program
     .version(version)
@@ -115,30 +117,6 @@ function start(){
         }
 
         var fetchedTX = fetchTX(txid)
-        //var ecl = null
-        
-        /*
-        // check if tx cached
-        if(program.cache){
-            var cachedTX = getCache(txid)
-            if(cachedTX){
-                console.log("Cache matched " + txid)
-                fetchedTX = (async()=>{return cachedTX})()
-            }
-        }
-        
-        // fetch TX from electrumX server
-        if(fetchedTX == null){
-            fetchedTX = getCliFromPool().then(result=>{
-                ecl = result
-                return ecl.connect()
-            }).then(r=>{
-                console.log("Getting " + txid)
-                return ecl.blockchainTransaction_get(txid, false)
-            })
-        }
-        */
-        
         // handle tx
         fetchedTX.then(tx=>{
             if(tx.code){
@@ -146,21 +124,21 @@ function start(){
                 res.status(500)
                 res.send(JSON.stringify(tx))
             }else{
-                var bcatRecord = resolveBcat(tx)
+                var bcatRecord = Protocol.resolveBcat(tx)
                 if(bcatRecord!=null){
                     Promise.all(bcatRecord.data.map(txid=>fetchTX(txid))).then(txs=>{
-                        var bPartRecords = txs.map(tx=>resolveBcatPart(tx))
+                        var bPartRecords = txs.map(tx=>Protocol.resolveBcatPart(tx))
                         if(req.params.txid.split('.').length > 1)res.set('Content-Type',mime.lookup(req.params.txid));
                         else res.set('Content-Type',bcatRecord.media_type);
                         res.send(Buffer.concat(bPartRecords.map(bPart=>bPart.data)))
                     })
                 }else{
-                    var bRecord = resolveB(tx)
+                    var bRecord = Protocol.resolveB(tx)
                     if(req.params.txid.split('.').length > 1)res.set('Content-Type',mime.lookup(req.params.txid));
                     else res.set('Content-Type',bRecord.media_type);
                     res.send(bRecord.data)
                 }
-                setCache(tx.id,tx.toString())
+                Cache.setCache(tx.id,tx.toString())
             }
         }).catch(e=>{
             console.log(`Failed to Get ${ txid } ...`)
@@ -184,13 +162,13 @@ function start(){
                 return []
             }).then(txs=>{
                 //console.log(txs)
-                var dTree = loadDTree(req.params.addr)
+                var dTree = Cache.loadDTree(req.params.addr)
                 return Promise.all(txs.map(txrecord=>{
                     return fetchTX(txrecord.tx_hash).then(tx=>{
-                        var record = resolveD(tx)
-                        if(record)updateDTree(dTree,record)
+                        var record = Protocol.resolveD(tx)
+                        if(record)Cache.updateDTree(dTree,record)
                         //console.log(tx.id)
-                        setCache(tx.id,tx.toString())
+                        Cache.setCache(tx.id,tx.toString())
                     })
                     /*
                     .catch(e=>{
@@ -198,13 +176,23 @@ function start(){
                     })
                     */
                 })).then(()=>{
-                    saveDTree(req.params.addr, dTree)
+                    Cache.saveDTree(req.params.addr, dTree)
+                    console.log(dTree)
+                    console.log(dTree[key])
+                    console.log(dTree[key].type == 'b')
                     if(dTree[key] && dTree[key].type == 'b')return fetchTX(dTree[key].value).then(tx=>{
-                        var bRecord = resolveB(tx)
+                        var bRecord = Protocol.resolveB(tx)
                         if(bRecord){
                             if(key.split('.').length > 1)res.set('Content-Type',mime.lookup(key))
                             else res.set('Content-Type',bRecord.media_type)
                             res.send(bRecord.data)
+                        }else if(bRecord = Protocol.resolveBcat(tx)){
+                            Promise.all(bRecord.data.map(txid=>fetchTX(txid))).then(txs=>{
+                                var bPartRecords = txs.map(tx=>Protocol.resolveBcatPart(tx))
+                                if(key.split('.').length > 1)res.set('Content-Type',mime.lookup(key));
+                                else res.set('Content-Type',bRecord.media_type);
+                                res.send(Buffer.concat(bPartRecords.map(bPart=>bPart.data)))
+                            })
                         }else res.send(`${key} not found`)
                     })
                     else res.send(`${key} not found`)
@@ -222,7 +210,7 @@ async function fetchTX(txid){
     
     // check if tx cached
     if(program.cache){
-        var cachedTX = getCache(txid)
+        var cachedTX = Cache.getCache(txid)
         if(cachedTX){
             console.log("Cache matched " + txid)
             fetchedTX = (async()=>{return cachedTX})()
@@ -240,121 +228,13 @@ async function fetchTX(txid){
                 if(!tx.code){
                     tx = bsv.Transaction(tx)
                     //console.log(tx.id)
-                    setCache(tx.id,tx.toString())
+                    Cache.setCache(tx.id,tx.toString())
                 }
                 return tx
             })
         })
     }
     return fetchedTX
-}
-
-function resolveD(tx){
-    var tx = bsv.Transaction(tx)
-    var DataOut = tx.outputs.filter(output=>output.script.isDataOut())[0]
-    // Not Data transaction
-    if(!DataOut)return null
-    var script = DataOut.script
-    if(!(script.chunks[1].buf.toString() == '19iG3WTYSsbyos3uJ733yK4zEioi1FesNU')){
-        // Not D transaction
-        return null
-    }
-    // Malformed
-    if(script.chunks.length<6)return null
-    //console.log(script.chunks[1].buf.toString())
-    return {
-        key: script.chunks[2].buf.toString('utf-8'),
-        value: script.chunks[3].buf.toString('utf-8'),
-        type: script.chunks[4].buf.toString(),
-        sequence: parseInt(script.chunks[5].buf)||1
-    }
-}
-
-function resolveB(tx){
-    var tx = bsv.Transaction(tx)
-    var Bscript = tx.outputs.filter(output=>output.script.isDataOut())[0].script
-    if(!(Bscript.chunks[1].buf.toString() == '19HxigV4QyBv3tHpQVcUEQyq1pzZVdoAut')){
-        // Not B transaction
-        return null
-    }
-    return {
-        data: Bscript.chunks[2].buf,
-        media_type: Bscript.chunks[3].buf.toString(),
-        encoding: (Bscript.chunks[4])?Bscript.chunks[4].buf.toString():"",
-        filename: (Bscript.chunks[5])?Bscript.chunks[5].buf.toString():""
-    }    
-}
-
-function resolveBcat(tx){
-    var tx = bsv.Transaction(tx)
-    var Bscript = tx.outputs.filter(output=>output.script.isDataOut())[0].script
-    if(!(Bscript.chunks[1].buf.toString() == '15DHFxWZJT58f9nhyGnsRBqrgwK4W6h4Up')){
-        // Not Bcat transaction
-        return null
-    }
-    return {
-        info: Bscript.chunks[2].buf,
-        media_type: Bscript.chunks[3].buf.toString(),
-        encoding: (Bscript.chunks[4])?Bscript.chunks[4].buf.toString():"",
-        filename: (Bscript.chunks[5])?Bscript.chunks[5].buf.toString():"",
-        flag: (Bscript.chunks[6])?Bscript.chunks[6].buf.toString():"",
-        data:Bscript.chunks.slice(7).map(chunk=>chunk.buf.toString('hex'))
-    }    
-}
-function resolveBcatPart(tx){
-    var tx = bsv.Transaction(tx)
-    var Bscript = tx.outputs.filter(output=>output.script.isDataOut())[0].script
-    if(!(Bscript.chunks[1].buf.toString() == '1ChDHzdd1H4wSjgGMHyndZm6qxEDGjqpJL')){
-        // Not BcatPart transaction, try B
-        return resolveB(tx)
-    }
-    return {
-        data: Bscript.chunks[2].buf
-    }    
-}
-
-function loadDTree(addr){
-    if(!fs.existsSync(`${os.tmpdir()}\/minigate\/${addr}.d.json`))return {}
-    else return JSON.parse(fs.readFileSync(`${os.tmpdir()}\/minigate\/${addr}.d.json`).toString())
-}
-function saveDTree(addr, dTree){
-    fs.writeFileSync(`${os.tmpdir()}\/minigate\/${addr}.d.json`,JSON.stringify(dTree,null,2))
-}
-function updateDTree(dTree, dRecord){
-    // Update if D Record is newer
-    if( !dTree[dRecord.key] || dTree[dRecord.key].sequence < dRecord.sequence ){
-        console.log(dRecord.key + 'Updated.')
-        dTree[dRecord.key] = dRecord
-    }
-}
-
-function cleanCache(){
-    var cacheDir = os.tmpdir()+"\/minigate"
-    var count = 0
-    if(fs.existsSync(cacheDir)){
-        var txFiles = fs.readdirSync(cacheDir)
-        count = txFiles.length
-        txFiles.forEach(function(file) {
-            var cachedTXFile = cacheDir + "/" + file
-            fs.unlinkSync(cachedTXFile)
-        })
-        fs.rmdirSync(cacheDir);
-    }
-    console.log(`MiniGate: ${ count } cached TX(s) cleaned`)
-}
-
-function getCache(txid){
-    var cacheDir = os.tmpdir()+"\/minigate"
-    if(fs.existsSync(cacheDir)){
-        if(fs.existsSync(cacheDir+'\/'+txid))return fs.readFileSync(cacheDir+'\/'+txid).toString()
-        else return null
-    }else return null
-}
-
-function setCache(txid, tx){
-    var cacheDir = os.tmpdir()+"\/minigate"
-    if(!fs.existsSync(cacheDir))fs.mkdirSync(cacheDir)
-    fs.writeFileSync(cacheDir+"\/"+txid, tx)
 }
 
 function getScriptHash(address){
