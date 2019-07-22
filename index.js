@@ -128,20 +128,23 @@ function start(){
                 if(bcatRecord!=null){
                     Promise.all(bcatRecord.data.map(txid=>fetchTX(txid))).then(txs=>{
                         var bPartRecords = txs.map(tx=>Protocol.resolveBcatPart(tx))
-                        if(req.params.txid.split('.').length > 1)res.set('Content-Type',mime.lookup(req.params.txid));
-                        else res.set('Content-Type',bcatRecord.media_type);
-                        res.send(Buffer.concat(bPartRecords.map(bPart=>bPart.data)))
+                        bcatRecord.media_type = correctMIME(bcatRecord.media_type, req.params.txid)
+                        console.log(bcatRecord.media_type)
+                        res.set('Content-Type',bcatRecord.media_type);
+                        res.send(replaceURL(Buffer.concat(bPartRecords.map(bPart=>bPart.data)),bcatRecord.media_type))
                     })
                 }else{
                     var bRecord = Protocol.resolveB(tx)
-                    if(req.params.txid.split('.').length > 1)res.set('Content-Type',mime.lookup(req.params.txid));
-                    else res.set('Content-Type',bRecord.media_type);
-                    res.send(bRecord.data)
+                    bRecord.media_type = correctMIME(bRecord.media_type, req.params.txid)
+                    console.log(bRecord.media_type)
+                    res.set('Content-Type',bRecord.media_type);
+                    res.send(replaceURL(bRecord.data, bRecord.media_type))
                 }
                 Cache.setCache(tx.id,tx.toString())
             }
         }).catch(e=>{
             console.log(`Failed to Get ${ txid } ...`)
+            console.log(e)
             //if(ecl)ecl.close()
             res.status(500)
             res.send(e)
@@ -183,15 +186,16 @@ function start(){
                     if(dTree[key] && dTree[key].type == 'b')return fetchTX(dTree[key].value).then(tx=>{
                         var bRecord = Protocol.resolveB(tx)
                         if(bRecord){
-                            if(key.split('.').length > 1)res.set('Content-Type',mime.lookup(key))
-                            else res.set('Content-Type',bRecord.media_type)
-                            res.send(bRecord.data)
+                            bRecord.media_type = correctMIME(bRecord.media_type, key)
+                            res.set('Content-Type',bRecord.media_type)
+                            res.send(replaceURL(bRecord.data, bRecord.media_type))
                         }else if(bRecord = Protocol.resolveBcat(tx)){
                             Promise.all(bRecord.data.map(txid=>fetchTX(txid))).then(txs=>{
                                 var bPartRecords = txs.map(tx=>Protocol.resolveBcatPart(tx))
-                                if(key.split('.').length > 1)res.set('Content-Type',mime.lookup(key));
-                                else res.set('Content-Type',bRecord.media_type);
-                                res.send(Buffer.concat(bPartRecords.map(bPart=>bPart.data)))
+                                bRecord.media_type = correctMIME(bRecord.media_type, key)
+                                console.log(bRecord.media_type)
+                                res.set('Content-Type',bRecord.media_type);
+                                res.send(replaceURL(Buffer.concat(bPartRecords.map(bPart=>bPart.data)),bRecord.media_type))
                             })
                         }else res.send(`${key} not found`)
                     })
@@ -245,6 +249,22 @@ function getScriptHash(address){
 
 function isAddress(address){
    return bsv.Address.isValid(address) 
+}
+
+var replaceMIME = ['text']
+function replaceURL(data, mime){
+    if(replaceMIME.find(type=>mime.indexOf(type)!=-1))return data.toString()
+        .replace(new RegExp("b://",'g'),"/")
+        .replace(new RegExp("bit://19HxigV4QyBv3tHpQVcUEQyq1pzZVdoAut",'g'),"")
+        .replace(new RegExp("bit://15DHFxWZJT58f9nhyGnsRBqrgwK4W6h4Up",'g'),"")
+    else return data
+}
+
+function correctMIME(mime, filename){
+    var res = mime
+    if(res=='binary')res='application/binary'
+    if(filename.split('.').length > 1)res = mime.lookup(filename)
+    return res
 }
 
 if(program.args.length==0)start()
