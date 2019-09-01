@@ -150,7 +150,7 @@ function start(){
             res.send(e)
         })
     })
-    app.get('/:addr/[a-zA-Z0-9_~\/@!$&*+,\.:;=-]+', (req, res, next) => {
+    app.get('/:addr/[a-zA-Z0-9%_~\/@!$&*+,\.:;=-]+', (req, res, next) => {
         if(!isAddress(req.params.addr))next()
         else{
             var key = req.url.replace(`/${req.params.addr}/`,'')
@@ -260,8 +260,8 @@ function replaceURL(data, mime){
     else return data
 }
 
-function correctMIME(mime, filename){
-    var res = mime
+function correctMIME(org_mime, filename){
+    var res = org_mime
     if(res=='binary')res='application/binary'
     if(filename.split('.').length > 1)res = mime.lookup(filename)
     return res
