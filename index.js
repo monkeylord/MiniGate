@@ -153,7 +153,7 @@ function start(){
     app.get('/:addr/[a-zA-Z0-9%_~\/@!$&*+,\.:;=-]+', (req, res, next) => {
         if(!isAddress(req.params.addr))next()
         else{
-            var key = req.url.replace(`/${req.params.addr}/`,'')
+            var key = req.url.replace(`/${req.params.addr}/`,'').replace(/\?.*$/,'')
             var txs = getCliFromPool().then(ecl=>{
                 return ecl.connect().then(()=>{
                     return ecl
@@ -182,7 +182,8 @@ function start(){
                     Cache.saveDTree(req.params.addr, dTree)
                     console.log(dTree)
                     console.log(dTree[key])
-                    console.log(dTree[key].type == 'b')
+                    if(dTree[key]) console.log(dTree[key].type == 'b')
+                    else console.log("404: " + key)
                     if(dTree[key] && dTree[key].type == 'b')return fetchTX(dTree[key].value).then(tx=>{
                         var bRecord = Protocol.resolveB(tx)
                         if(bRecord){
@@ -197,9 +198,9 @@ function start(){
                                 res.set('Content-Type',bRecord.media_type);
                                 res.send(replaceURL(Buffer.concat(bPartRecords.map(bPart=>bPart.data)),bRecord.media_type))
                             })
-                        }else res.send(`${key} not found`)
+                        }else res.status(404).send(`${key} not found`)
                     })
-                    else res.send(`${key} not found`)
+                    else res.status(404).send(`${key} not found`)
                 })
             })
         }
