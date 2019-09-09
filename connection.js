@@ -52,7 +52,7 @@ async function fetchTX(txid){
     if(program.cache){
         var cachedTX = getCache(txid)
         if(cachedTX){
-            console.log("Cache matched " + txid)
+            console.log(` - Cache matched ${txid}`)
             fetchedTX = (async()=>{return cachedTX})()
         }
     }
@@ -63,7 +63,7 @@ async function fetchTX(txid){
             ecl = result
             return ecl.connect()
         }).then(r=>{
-            console.log("Getting " + txid)
+            console.log(` - Getting ${txid}`)
             return ecl.blockchainTransaction_get(txid, false).then(tx=>{
                 if(!tx.code){
                     tx = bsv.Transaction(tx)

@@ -14,6 +14,9 @@ const version = require('./package.json').version
 const Protocol = require('./protocol')
 const Cache = require('./cache')
 
+global.debug = false
+const DTREE_UPDATE_INTERVAL = 120000
+
 var serverpool = [
     'electrumx.bitcoinsv.io:50002',
     'sv.satoshi.io:50002',
@@ -111,6 +114,7 @@ function start(){
     app.get('/', (req, res) => res.send('MiniGate Online'))
     app.get('/:txid', (req, res) => {
         var txid = req.params.txid.split('.')[0]
+        console.log(`Handling ${txid}`)
         if(!txidReg.test(txid)) {
             res.status(404)
             return res.send("MiniGate Error: Not A Valid TXID")
@@ -129,14 +133,14 @@ function start(){
                     Promise.all(bcatRecord.data.map(txid=>fetchTX(txid))).then(txs=>{
                         var bPartRecords = txs.map(tx=>Protocol.resolveBcatPart(tx))
                         bcatRecord.media_type = correctMIME(bcatRecord.media_type, req.params.txid)
-                        console.log(bcatRecord.media_type)
+                        if(global.debug)console.log(bcatRecord.media_type)
                         res.set('Content-Type',bcatRecord.media_type);
                         res.send(replaceURL(Buffer.concat(bPartRecords.map(bPart=>bPart.data)),bcatRecord.media_type))
                     })
                 }else{
                     var bRecord = Protocol.resolveB(tx)
                     bRecord.media_type = correctMIME(bRecord.media_type, req.params.txid)
-                    console.log(bRecord.media_type)
+                    if(global.debug)console.log(bRecord.media_type)
                     res.set('Content-Type',bRecord.media_type);
                     res.send(replaceURL(bRecord.data, bRecord.media_type))
                 }
@@ -154,54 +158,61 @@ function start(){
         if(!isAddress(req.params.addr))next()
         else{
             var key = req.url.replace(`/${req.params.addr}/`,'').replace(/\?.*$/,'')
-            var txs = getCliFromPool().then(ecl=>{
-                return ecl.connect().then(()=>{
-                    return ecl
-                })
-            }).then(ecl=>{
-                return ecl.blockchainScripthash_getHistory(getScriptHash(req.params.addr))
-            }).catch(e=>{
-                console.log(`Fail to get ${req.params.addr}'s latest record.`)
-                return []
-            }).then(txs=>{
-                //console.log(txs)
-                var dTree = Cache.loadDTree(req.params.addr)
-                return Promise.all(txs.map(txrecord=>{
-                    return fetchTX(txrecord.tx_hash).then(tx=>{
-                        var record = Protocol.resolveD(tx)
-                        if(record)Cache.updateDTree(dTree,record)
-                        //console.log(tx.id)
-                        Cache.setCache(tx.id,tx.toString())
+            console.log(`Handling ${req.params.addr}/${key}`)
+            var dTree = Cache.loadDTree(req.params.addr)
+            var beforeHandleD = Promise.resolve()
+            if(!dTree.lastUpdate || (new Date().getTime() - dTree.lastUpdate) > DTREE_UPDATE_INTERVAL){
+                // Should Update DTree
+                console.log(`Updating DTree for ${req.params.addr}`)
+                beforeHandleD = getCliFromPool().then(ecl=>{
+                    return ecl.connect().then(()=>{
+                        return ecl
                     })
-                    /*
-                    .catch(e=>{
-                        return
-                    })
-                    */
-                })).then(()=>{
+                }).then(ecl=>{
+                    return ecl.blockchainScripthash_getHistory(getScriptHash(req.params.addr))
+                }).catch(e=>{
+                    console.log(`Fail to get ${req.params.addr}'s latest record.`)
+                    return []
+                }).then(txs=>{
+                    //console.log(txs)
+                    return Promise.all(txs.map(txrecord=>{
+                        return fetchTX(txrecord.tx_hash).then(tx=>{
+                            var record = Protocol.resolveD(tx)
+                            if(record)Cache.updateDTree(dTree,record)
+                            //console.log(tx.id)
+                            Cache.setCache(tx.id,tx.toString())
+                        })
+                    }))
+                }).then(()=>{
                     Cache.saveDTree(req.params.addr, dTree)
-                    console.log(dTree)
-                    console.log(dTree[key])
-                    if(dTree[key]) console.log(dTree[key].type == 'b')
-                    else console.log("404: " + key)
-                    if(dTree[key] && dTree[key].type == 'b')return fetchTX(dTree[key].value).then(tx=>{
-                        var bRecord = Protocol.resolveB(tx)
-                        if(bRecord){
-                            bRecord.media_type = correctMIME(bRecord.media_type, key)
-                            res.set('Content-Type',bRecord.media_type)
-                            res.send(replaceURL(bRecord.data, bRecord.media_type))
-                        }else if(bRecord = Protocol.resolveBcat(tx)){
-                            Promise.all(bRecord.data.map(txid=>fetchTX(txid))).then(txs=>{
-                                var bPartRecords = txs.map(tx=>Protocol.resolveBcatPart(tx))
-                                bRecord.media_type = correctMIME(bRecord.media_type, key)
-                                console.log(bRecord.media_type)
-                                res.set('Content-Type',bRecord.media_type);
-                                res.send(replaceURL(Buffer.concat(bPartRecords.map(bPart=>bPart.data)),bRecord.media_type))
-                            })
-                        }else res.status(404).send(`${key} not found`)
-                    })
-                    else res.status(404).send(`${key} not found`)
+                    console.log(`DTree for ${req.params.addr} updated`)
                 })
+            }
+            
+            // We have latest DTree, handle D request now
+            beforeHandleD.then(()=>{
+                if(global.debug)console.log(dTree)
+                if(global.debug)console.log(dTree[key])
+                if(dTree[key])
+                    console.log(` - DRecord ${req.params.addr}/${key} found.\n - Type: ${dTree[key].type}\n - Value: ${dTree[key].value}\n - Last update: ${Date(dTree[key].sequence)}`)
+                else console.log("404: " + key)
+                if(dTree[key] && dTree[key].type == 'b')return fetchTX(dTree[key].value).then(tx=>{
+                    var bRecord = Protocol.resolveB(tx)
+                    if(bRecord){
+                        bRecord.media_type = correctMIME(bRecord.media_type, key)
+                        res.set('Content-Type',bRecord.media_type)
+                        res.send(replaceURL(bRecord.data, bRecord.media_type))
+                    }else if(bRecord = Protocol.resolveBcat(tx)){
+                        Promise.all(bRecord.data.map(txid=>fetchTX(txid))).then(txs=>{
+                            var bPartRecords = txs.map(tx=>Protocol.resolveBcatPart(tx))
+                            bRecord.media_type = correctMIME(bRecord.media_type, key)
+                            if(global.debug)console.log(bRecord.media_type)
+                            res.set('Content-Type',bRecord.media_type);
+                            res.send(replaceURL(Buffer.concat(bPartRecords.map(bPart=>bPart.data)),bRecord.media_type))
+                        })
+                    }else res.status(404).send(`${key} not found`)
+                })
+                else res.status(404).send(`${key} not found`)
             })
         }
     })

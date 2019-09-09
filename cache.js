@@ -16,9 +16,10 @@ Cache.saveDTree = function (addr, dTree){
 Cache.updateDTree = function (dTree, dRecord){
     // Update if D Record is newer
     if( !dTree[dRecord.key] || dTree[dRecord.key].sequence < dRecord.sequence ){
-        console.log(dRecord.key + ' Updated.')
+        console.log(` - ${dRecord.key} Updated.`)
         dTree[dRecord.key] = dRecord
     }
+    dTree.lastUpdate = new Date().getTime()
 }
 
 Cache.cleanCache = function (){
