@@ -1,6 +1,6 @@
 {
   "name": "minigate",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "A light weight metanet gateway.",
   "main": "index.js",
   "scripts": {
@@ -28,7 +28,7 @@
   },
   "homepage": "https://github.com/monkeylord/MiniGate#readme",
   "dependencies": {
-    "bsv": "^0.26.4",
+    "bsv": "^1.5.3",
     "commander": "^2.19.0",
     "electrum-client": "0.0.6",
     "express": "^4.16.4",
