@@ -4,6 +4,7 @@ const os = require('os')
 const fs = require('fs')
 const program = require('commander')
 const express = require('express')
+const https = require('https')
 const app = express()
 const bsv = require('bsv')
 const ElectrumCli = require('electrum-client')
@@ -43,6 +44,7 @@ program
     .version(version)
     .option('-e, --electrumX [electrumXServer]', 'Specify a ElectrumX Server')
     .option('-p, --port [port]', 'Specify port minigate should listen on', 8000)
+    .option('-s, --sslport [port]', 'Specify ssl port minigate should listen on', 8443)
     .option('-c, --cache [true/false]', 'Enable local TX cache', true)
 
 program
@@ -216,6 +218,17 @@ function start(){
             })
         }
     })
+    if (fs.existsSync('privkey.pem') && fs.existsSync('fullchain.pem')) {
+        const httpsServer = https.createServer({
+              key: fs.readFileSync('privkey.pem'),
+              cert: fs.readFileSync('fullchain.pem'),
+        }, app)
+        httpsServer.listen(program.sslport, () => {
+            console.log(`MiniGate Listening with SSL on ${ program.sslport } ...`)
+        })
+    } else {
+        console.log('no privkey.pem / fullchain.pem: HTTPS disabled. letsencrypt.org provides free')
+    }
     app.listen(program.port, () => console.log(`MiniGate Listening on ${ program.port } ...\n  Version: ${ version }`))
     getCliFromPool()
 }
