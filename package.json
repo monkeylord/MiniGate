@@ -1,6 +1,6 @@
 {
   "name": "minigate",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "description": "A light weight metanet gateway.",
   "main": "index.js",
   "scripts": {
