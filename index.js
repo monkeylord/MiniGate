@@ -115,6 +115,7 @@ function start(){
     }
     app.get('/', (req, res) => res.send('MiniGate Online'))
     app.get('/:txid', (req, res) => {
+        res.header("Access-Control-Allow-Origin", "*")
         var txid = req.params.txid.split('.')[0]
         console.log(`Handling ${txid}`)
         if(!txidReg.test(txid)) {
@@ -157,6 +158,7 @@ function start(){
         })
     })
     app.get('/:addr/[a-zA-Z0-9%_~\/@!$&*+,\.:;=-]+', (req, res, next) => {
+        res.header("Access-Control-Allow-Origin", "*")
         if(!isAddress(req.params.addr))next()
         else{
             var key = req.url.replace(`/${req.params.addr}/`,'').replace(/\?.*$/,'')
